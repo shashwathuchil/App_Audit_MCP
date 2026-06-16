@@ -28,6 +28,10 @@ export class PerformanceAuditor {
       const runnerResult = await lighthouse(url, options);
       await chrome.kill();
 
+      if (!runnerResult) {
+        throw new Error('Lighthouse audit failed: no result returned');
+      }
+
       const report = JSON.parse(runnerResult.report as string);
       const audits = report.audits;
       const categories = report.categories;

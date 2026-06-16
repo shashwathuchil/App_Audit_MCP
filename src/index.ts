@@ -7,6 +7,7 @@ import {
   ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
+import { zodToJsonSchema } from 'zod-to-json-schema';
 import logger from './utils/logger.js';
 import { SetupAuditor } from './auditors/setup.js';
 import { Crawler } from './auditors/crawler.js';
@@ -44,6 +45,21 @@ import { configManager } from './utils/config.js';
 import { memoryOptimizer } from './utils/memory-optimizer.js';
 import { resumeManager } from './utils/resume-manager.js';
 
+const toolInputSchemas = {
+  setupAuditors: zodToJsonSchema(SetupAuditorsSchema, 'SetupAuditorsSchema'),
+  crawlApplication: zodToJsonSchema(CrawlApplicationSchema, 'CrawlApplicationSchema'),
+  collectConsoleLogs: zodToJsonSchema(CollectConsoleLogsSchema, 'CollectConsoleLogsSchema'),
+  collectNetworkIssues: zodToJsonSchema(CollectNetworkIssuesSchema, 'CollectNetworkIssuesSchema'),
+  runAccessibilityAudit: zodToJsonSchema(RunAccessibilityAuditSchema, 'RunAccessibilityAuditSchema'),
+  runPerformanceAudit: zodToJsonSchema(RunPerformanceAuditSchema, 'RunPerformanceAuditSchema'),
+  runUIValidation: zodToJsonSchema(RunUIValidationSchema, 'RunUIValidationSchema'),
+  runVisualRegression: zodToJsonSchema(RunVisualRegressionSchema, 'RunVisualRegressionSchema'),
+  runSEOAudit: zodToJsonSchema(RunSEOAuditSchema, 'RunSEOAuditSchema'),
+  runSecurityReview: zodToJsonSchema(RunSecurityReviewSchema, 'RunSecurityReviewSchema'),
+  analyzeApplication: zodToJsonSchema(AnalyzeApplicationSchema, 'AnalyzeApplicationSchema'),
+  generateReport: zodToJsonSchema(GenerateReportSchema, 'GenerateReportSchema'),
+};
+
 const server = new Server(
   {
     name: 'app-auditor-mcp',
@@ -62,62 +78,62 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       {
         name: 'setup_auditors',
         description: 'Install and validate Playwright browsers, Chrome DevTools MCP server, and dependencies',
-        inputSchema: SetupAuditorsSchema,
+        inputSchema: toolInputSchemas.setupAuditors,
       },
       {
         name: 'crawl_application',
         description: 'Crawl a web application to discover routes, forms, buttons, links, menus, and modals',
-        inputSchema: CrawlApplicationSchema,
+        inputSchema: toolInputSchemas.crawlApplication,
       },
       {
         name: 'collect_console_logs',
         description: 'Collect console errors, warnings, and runtime exceptions from a page',
-        inputSchema: CollectConsoleLogsSchema,
+        inputSchema: toolInputSchemas.collectConsoleLogs,
       },
       {
         name: 'collect_network_issues',
         description: 'Collect failed requests, 4xx/5xx responses, slow requests, and oversized payloads',
-        inputSchema: CollectNetworkIssuesSchema,
+        inputSchema: toolInputSchemas.collectNetworkIssues,
       },
       {
         name: 'run_accessibility_audit',
         description: 'Run accessibility audit using axe-core to detect WCAG violations',
-        inputSchema: RunAccessibilityAuditSchema,
+        inputSchema: toolInputSchemas.runAccessibilityAudit,
       },
       {
         name: 'run_performance_audit',
         description: 'Run performance audit using Lighthouse to collect Core Web Vitals',
-        inputSchema: RunPerformanceAuditSchema,
+        inputSchema: toolInputSchemas.runPerformanceAudit,
       },
       {
         name: 'run_ui_validation',
         description: 'Detect UI issues like overlapping elements, clipped text, horizontal scrolling across viewports',
-        inputSchema: RunUIValidationSchema,
+        inputSchema: toolInputSchemas.runUIValidation,
       },
       {
         name: 'run_visual_regression',
         description: 'Capture screenshots across multiple viewports and detect rendering issues',
-        inputSchema: RunVisualRegressionSchema,
+        inputSchema: toolInputSchemas.runVisualRegression,
       },
       {
         name: 'run_seo_audit',
         description: 'Run SEO audit to check title tags, meta descriptions, headings, and other SEO factors',
-        inputSchema: RunSEOAuditSchema,
+        inputSchema: toolInputSchemas.runSEOAudit,
       },
       {
         name: 'run_security_review',
         description: 'Run security review to detect exposed secrets, insecure cookies, mixed content, and CSP issues',
-        inputSchema: RunSecurityReviewSchema,
+        inputSchema: toolInputSchemas.runSecurityReview,
       },
       {
         name: 'analyze_application',
         description: 'Master workflow that runs all audits on a web application and generates a comprehensive report',
-        inputSchema: AnalyzeApplicationSchema,
+        inputSchema: toolInputSchemas.analyzeApplication,
       },
       {
         name: 'generate_report',
         description: 'Generate HTML, Markdown, and JSON reports from audit data',
-        inputSchema: GenerateReportSchema,
+        inputSchema: toolInputSchemas.generateReport,
       },
     ],
   };
@@ -586,8 +602,35 @@ async function analyzeApplication(config: z.infer<typeof AnalyzeApplicationSchem
 
   logger.info('Step 5: Generating reports');
   const generator = new ReportGenerator();
-  await generator.generate(reportData, 'all');
+  const reportPaths = await generator.generate(reportData, 'all');
   progress.completeStage('reports');
+
+  // Auto-open HTML report
+  if (reportPaths.html) {
+    try {
+      const { exec } = await import('child_process');
+      const platform = process.platform;
+      
+      let openCommand: string;
+      if (platform === 'darwin') {
+        openCommand = `open "${reportPaths.html}"`;
+      } else if (platform === 'win32') {
+        openCommand = `start "" "${reportPaths.html}"`;
+      } else {
+        openCommand = `xdg-open "${reportPaths.html}"`;
+      }
+      
+      exec(openCommand, (error) => {
+        if (error) {
+          logger.warn(`Failed to open HTML report: ${error.message}`);
+        } else {
+          logger.info(`HTML report opened automatically: ${reportPaths.html}`);
+        }
+      });
+    } catch (error) {
+      logger.warn('Failed to auto-open HTML report:', error);
+    }
+  }
 
   // Cleanup resources
   await browserPool.cleanup();

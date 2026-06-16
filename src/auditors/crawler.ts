@@ -200,13 +200,13 @@ export class Crawler {
           fields,
           selector: await form.evaluate((el) => {
             const path: string[] = [];
-            let current = el;
+            let current: HTMLElement | null = el;
             while (current && current !== document.body) {
               const tag = current.tagName.toLowerCase();
               const id = current.id ? `#${current.id}` : '';
               const classes = current.className ? `.${current.className.split(' ').join('.')}` : '';
               path.unshift(`${tag}${id}${classes}`);
-              current = current.parentElement!;
+              current = current.parentElement;
             }
             return path.join(' > ');
           }),

@@ -1,0 +1,28 @@
+{
+  "mcpServers": {
+    "io.windsurf/mcp-playwright": {
+      "args": [
+        "-y",
+        "@playwright/mcp@latest"
+      ],
+      "command": "npx",
+      "registry": "io.windsurf/mcp-playwright"
+    },
+    "chrome-devtools": {
+      "command": "npx",
+      "args": [
+        "chrome-devtools-mcp@latest"
+      ]
+    },
+    "app-auditor": {
+      "command": "node",
+      "args": [
+        "/Users/shashwath/Documents/personal/MCP_1/dist/index.js"
+      ],
+      "env": {
+        "NODE_ENV": "production",
+        "LOG_LEVEL": "info"
+      }
+    }
+  }
+}
