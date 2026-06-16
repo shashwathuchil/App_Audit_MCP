@@ -36,6 +36,13 @@ import {
 import { AuditConfig, AuditResult, ReportData, ReportSummary, RouteBreakdown } from './types/index.js';
 import pLimit from 'p-limit';
 import { ensureDirectories } from './utils/storage.js';
+import { BrowserPool } from './utils/browser-pool.js';
+import { auditCache } from './utils/cache.js';
+import { ProgressTracker } from './utils/progress.js';
+import { ResourceManager } from './utils/resource-manager.js';
+import { configManager } from './utils/config.js';
+import { memoryOptimizer } from './utils/memory-optimizer.js';
+import { resumeManager } from './utils/resume-manager.js';
 
 const server = new Server(
   {
@@ -332,6 +339,31 @@ async function analyzeApplication(config: z.infer<typeof AnalyzeApplicationSchem
   logger.info(`Starting comprehensive audit of ${config.url}`);
   const startTime = Date.now();
 
+  // Initialize optimizations
+  const resourceManager = ResourceManager.getInstance();
+  const progress = new ProgressTracker();
+  const browserPool = BrowserPool.getInstance();
+  
+  // Validate and set configuration
+  const validatedConfig = configManager.validate({
+    url: config.url,
+    depth: config.depth,
+    maxRoutes: config.maxRoutes,
+    mobile: config.mobile,
+    desktop: config.desktop,
+    authenticated: config.authenticated,
+    concurrency: config.concurrency,
+    timeout: 30000,
+  });
+
+  // Set resource limits based on system
+  const recommendedConcurrency = resourceManager.getRecommendedConcurrency();
+  const actualConcurrency = Math.min(validatedConfig.concurrency, recommendedConcurrency);
+  browserPool.setMaxContexts(actualConcurrency * 2);
+
+  // Start memory monitoring
+  memoryOptimizer.startMonitoring(10000);
+
   await ensureDirectories();
 
   const auditResult: AuditResult = {
@@ -367,19 +399,37 @@ async function analyzeApplication(config: z.infer<typeof AnalyzeApplicationSchem
   const seoAuditor = new SEOAuditor();
   const securityAuditor = new SecurityAuditor();
 
+  // Initialize resume state
+  const auditId = `audit-${Date.now()}`;
+  await resumeManager.initialize(auditId, validatedConfig, []);
+
+  progress.setStage('crawling', 1);
   logger.info('Step 1: Crawling application');
-  auditResult.siteMap = await crawler.crawl(
-    config.url,
-    config.depth,
-    config.maxRoutes,
-    config.authenticated,
-    config.authCredentials
-  );
+  
+  // Check cache for crawl results
+  const cacheKey = { url: config.url, depth: config.depth, maxRoutes: config.maxRoutes };
+  const cachedSiteMap = auditCache.get('crawl', cacheKey) as any;
+  if (cachedSiteMap) {
+    logger.info('Using cached crawl results');
+    auditResult.siteMap = cachedSiteMap;
+  } else {
+    auditResult.siteMap = await crawler.crawl(
+      config.url,
+      config.depth,
+      config.maxRoutes,
+      config.authenticated,
+      config.authCredentials
+    );
+    auditCache.set('crawl', cacheKey, auditResult.siteMap);
+  }
+  
+  progress.completeStage('crawling');
 
   const routesToAudit = auditResult.siteMap.routes.slice(0, config.maxRoutes);
   logger.info(`Found ${routesToAudit.length} routes to audit`);
+  logger.info(`Using concurrency: ${actualConcurrency} (requested: ${config.concurrency}, recommended: ${recommendedConcurrency})`);
 
-  const limit = pLimit(config.concurrency);
+  const limit = pLimit(actualConcurrency);
   const viewports = config.mobile || config.desktop
     ? [
         ...(config.mobile ? [{ width: 375, height: 667 }] : []),
@@ -387,10 +437,12 @@ async function analyzeApplication(config: z.infer<typeof AnalyzeApplicationSchem
       ]
     : [{ width: 1920, height: 1080 }];
 
+  progress.setStage('auditing', routesToAudit.length);
   logger.info('Step 2: Running parallel audits on all routes');
-  const auditTasks = routesToAudit.map((route) =>
+  const auditTasks = routesToAudit.map((route, index) =>
     limit(async () => {
-      logger.info(`Auditing route: ${route.url}`);
+      logger.info(`Auditing route: ${route.url} (${index + 1}/${routesToAudit.length})`);
+      progress.updateProgress('auditing');
 
       const [consoleLogs, networkIssues, accessibilityResult, performanceResult, uiIssues, seoResult, securityResult] =
         await Promise.all([
@@ -438,22 +490,37 @@ async function analyzeApplication(config: z.infer<typeof AnalyzeApplicationSchem
   );
 
   const results = await Promise.all(auditTasks);
+  progress.completeStage('auditing');
 
   logger.info('Step 3: Aggregating results');
-  for (const result of results) {
-    auditResult.consoleLogs.push(...result.consoleLogs);
-    auditResult.networkIssues.push(...result.networkIssues);
-    auditResult.accessibilityIssues.push(...result.accessibilityResult);
-    auditResult.performanceMetrics.push(result.performanceResult.metrics);
-    auditResult.performanceIssues.push(...result.performanceResult.issues);
-    auditResult.uiIssues.push(...result.uiIssues);
-    auditResult.seoIssues.push(...result.seoResult);
-    auditResult.securityObservations.push(...result.securityResult);
-  }
+  progress.setStage('aggregating', 1);
+  
+  // Optimize memory by using streaming for large arrays
+  const chunkSize = memoryOptimizer.getRecommendedChunkSize(100);
+  memoryOptimizer.streamProcessArray(
+    results,
+    (result) => {
+      auditResult.consoleLogs.push(...result.consoleLogs);
+      auditResult.networkIssues.push(...result.networkIssues);
+      auditResult.accessibilityIssues.push(...result.accessibilityResult);
+      auditResult.performanceMetrics.push(result.performanceResult.metrics);
+      auditResult.performanceIssues.push(...result.performanceResult.issues);
+      auditResult.uiIssues.push(...result.uiIssues);
+      auditResult.seoIssues.push(...result.seoResult);
+      auditResult.securityObservations.push(...result.securityResult);
+    },
+    chunkSize
+  );
+  
+  progress.completeStage('aggregating');
 
+  progress.setStage('screenshots', 1);
   logger.info('Step 4: Capturing screenshots');
   const screenshots = await visualRegressionAuditor.capture(config.url, config.url, viewports);
   auditResult.screenshots.push(...screenshots);
+  progress.completeStage('screenshots');
+
+  progress.setStage('scoring', 1);
 
   const accessibilityAuditorForScore = new AccessibilityAuditor();
   const performanceAuditorForScore = new PerformanceAuditor();
@@ -497,7 +564,10 @@ async function analyzeApplication(config: z.infer<typeof AnalyzeApplicationSchem
   summary.overallScore = Math.round(
     (summary.performanceScore + summary.accessibilityScore + summary.seoScore + summary.securityScore) / 4
   );
+  progress.completeStage('scoring');
 
+  progress.setStage('reports', 1);
+  
   const routeBreakdown: RouteBreakdown[] = results.map((r) => ({
     route: r.route.url,
     status: r.consoleLogs.length > 0 || r.networkIssues.length > 0 ? 'warning' : 'passed',
@@ -517,8 +587,17 @@ async function analyzeApplication(config: z.infer<typeof AnalyzeApplicationSchem
   logger.info('Step 5: Generating reports');
   const generator = new ReportGenerator();
   await generator.generate(reportData, 'all');
+  progress.completeStage('reports');
+
+  // Cleanup resources
+  await browserPool.cleanup();
+  memoryOptimizer.stopMonitoring();
+  await resumeManager.clearState(auditId);
 
   logger.info(`Audit completed in ${(summary.duration / 1000).toFixed(2)} seconds`);
+  logger.info(`Memory stats:`, memoryOptimizer.getMemoryStats());
+  logger.info(`Browser pool stats:`, browserPool.getStats());
+  
   return reportData;
 }
 
