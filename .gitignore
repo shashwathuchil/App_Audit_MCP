@@ -1,0 +1,12 @@
+node_modules/
+dist/
+reports/
+*.log
+.DS_Store
+.env
+coverage/
+*.tsbuildinfo
+screenshots/
+logs/
+network/
+traces/

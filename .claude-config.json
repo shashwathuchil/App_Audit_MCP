@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "app-auditor": {
+      "command": "node",
+      "args": [
+        "/Users/shashwath/Documents/personal/MCP_1/dist/index.js"
+      ],
+      "env": {
+        "NODE_ENV": "production",
+        "LOG_LEVEL": "info"
+      }
+    }
+  }
+}

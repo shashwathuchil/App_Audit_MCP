@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  app-auditor:
+    build: .
+    container_name: app-auditor-mcp
+    volumes:
+      - ./reports:/app/reports
+      - ./logs:/app/logs
+    environment:
+      - NODE_ENV=production
+      - LOG_LEVEL=info
+    stdin_open: true
+    tty: true
+    # For MCP stdio communication
+    command: node dist/index.js
